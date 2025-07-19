@@ -1,160 +1,304 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Collaborative Text Editor</title>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Minimal Collaborative Editor</title>
     <style>
+        :root {
+            --bg: #fff;
+            --fg: #111;
+            --control-bg: #f0f0f0;
+            --border: #ccc;
+            --log-bg: #fafafa;
+        }
+        [data-theme="dark"] {
+            --bg: #121212;
+            --fg: #eee;
+            --control-bg: #1e1e1e;
+            --border: #444;
+            --log-bg: #222;
+        }
+        * {
+            box-sizing: border-box;
+        }
         body {
-            font-family: Arial, sans-serif;
             margin: 0;
-            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen,
+            Ubuntu, Cantarell, "Open Sans", "Helvetica Neue", sans-serif;
+            background: var(--bg);
+            color: var(--fg);
             display: flex;
             flex-direction: column;
             height: 100vh;
         }
-
         #controls {
             display: flex;
-            padding: 10px;
-            background-color: #f4f4f4;
-            border-bottom: 1px solid #ddd;
+            gap: 0.5rem;
+            padding: 0.75rem 1rem;
+            background: var(--control-bg);
+            border-bottom: 1px solid var(--border);
+            align-items: center;
         }
-
-        #controls input, #controls button {
-            margin-right: 10px;
-            padding: 8px;
-            font-size: 14px;
+        #documentId {
+            flex: 1;
+            padding: 0.5rem;
+            font-size: 1rem;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            background: var(--bg);
+            color: var(--fg);
         }
-
+        button {
+            padding: 0.5rem 1rem;
+            font-size: 1rem;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            background: var(--bg);
+            color: var(--fg);
+            cursor: pointer;
+            transition: background 0.2s ease;
+        }
+        button:hover {
+            background: var(--border);
+        }
+        #themeToggle {
+            margin-left: auto;
+            font-size: 1.25rem;
+            background: none;
+            border: none;
+            cursor: pointer;
+            color: var(--fg);
+        }
         #editor {
             flex: 1;
-            padding: 10px;
+            width: 100%;
+            padding: 1rem;
+            font-size: 1.125rem;
+            line-height: 1.5;
             border: none;
             outline: none;
-            font-size: 16px;
-            line-height: 1.5;
             resize: none;
-            width: 100%;
-            height: 100%;
+            background: var(--bg);
+            color: var(--fg);
+            font-family: monospace, monospace;
         }
-
         #logs {
-            height: 150px;
+            height: 140px;
             overflow-y: auto;
-            background-color: #f9f9f9;
-            border-top: 1px solid #ddd;
-            padding: 10px;
-            font-size: 14px;
+            background: var(--log-bg);
+            border-top: 1px solid var(--border);
+            padding: 0.5rem 1rem;
+            font-size: 0.875rem;
+            font-family: monospace, monospace;
+            color: var(--fg);
         }
-
         #logs p {
-            margin: 0;
-            padding: 5px 0;
-            border-bottom: 1px solid #eee;
-        }
-
-        #logs p:last-child {
-            border-bottom: none;
+            margin: 0 0 0.25rem 0;
+            line-height: 1.3;
+            word-break: break-word;
         }
     </style>
 </head>
 <body>
-<!-- Controls for document actions -->
 <div id="controls">
-    <input type="text" id="documentId" placeholder="Enter Document ID">
+    <input id="documentId" type="text" placeholder="Enter Document ID" />
     <button id="createBtn">Create</button>
     <button id="openBtn">Open</button>
-    <button id="updateBtn">Update</button>
+    <button id="themeToggle" aria-label="Toggle theme">🌙</button>
 </div>
-
-<!-- Text editor area -->
-<textarea id="editor" placeholder="Start typing..."></textarea>
-
-<!-- Logs section -->
+<textarea id="editor" placeholder="Start typing..." spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off"></textarea>
 <div id="logs"></div>
 
 <script>
-    // WebSocket setup
-    const socket = new WebSocket('ws://localhost:8080/editor');
-    const logs = document.getElementById('logs');
-    const editor = document.getElementById('editor');
-    const documentIdInput = document.getElementById('documentId');
+    const socket = new WebSocket("ws://localhost:8080/editor"); // Adjust URL as needed
+    const logs = document.getElementById("logs");
+    const editor = document.getElementById("editor");
+    const documentIdInput = document.getElementById("documentId");
+    const createBtn = document.getElementById("createBtn");
+    const openBtn = document.getElementById("openBtn");
+    const themeToggle = document.getElementById("themeToggle");
 
     let currentDocumentId = null;
+    let localVersion = 0;
+    let sessionId = "";
+    let prevValue = "";
 
-    function setCaretPosition(textArea, position) {
-        if(textArea.setSelectionRange){
-            textArea.focus();
-            textArea.setSelectionRange(position, position);
-        }else if(textArea.createTextRange){
-            var range = textArea.createTextRange();
-            range.collapse(true);
-            range.moveEnd('character', position);
-            range.moveStart('character', position);
-            range.select();
+    function log(msg) {
+        const p = document.createElement("p");
+        p.textContent = msg;
+        logs.appendChild(p);
+        logs.scrollTop = logs.scrollHeight;
+    }
+
+    // Minimal diff: find common prefix and suffix, detect insert/delete/replace
+    function getDiff(oldStr, newStr) {
+        const oldArr = Array.from(oldStr);
+        const newArr = Array.from(newStr);
+        let start = 0;
+        let oldEnd = oldArr.length;
+        let newEnd = newArr.length;
+
+        while (start < oldEnd && start < newEnd && oldArr[start] === newArr[start]) {
+            start++;
+        }
+        while (
+            oldEnd > start &&
+            newEnd > start &&
+            oldArr[oldEnd - 1] === newArr[newEnd - 1]
+            ) {
+            oldEnd--;
+            newEnd--;
+        }
+
+        const removed = oldArr.slice(start, oldEnd).join('');
+        const added = newArr.slice(start, newEnd).join('');
+
+        if (removed.length === 0 && added.length > 0) {
+            return { eventType: "insert", start, data: added, end: start };
+        } else if (added.length === 0 && removed.length > 0) {
+            return { eventType: "delete", start, end: oldEnd - 1, data: "" };
+        } else if (removed.length > 0 && added.length > 0) {
+            return { eventType: "replace", start, end: oldEnd - 1, data: added };
+        } else {
+            return null;
         }
     }
 
-    // Log messages to the logs section
-    function logMessage(message) {
-        const logEntry = document.createElement('p');
-        logEntry.textContent = message;
-        logs.appendChild(logEntry);
-        logs.scrollTop = logs.scrollHeight; // Auto-scroll to the bottom
-    }
+    socket.addEventListener("open", () => log("WebSocket connected."));
+    socket.addEventListener("error", e => log("WebSocket error: " + e.message));
+    socket.addEventListener("close", () => log("WebSocket disconnected."));
 
-    // WebSocket event listeners
-    socket.onopen = () => logMessage('WebSocket connection established.');
-    socket.onmessage = (event) => {
-        logMessage(`Received: ${event.data}`);
-        const data = JSON.parse(event.data);
-        var content = data.data;
-        currentDocumentId = data.docId;
-        editor.value = content; // Update the editor with the received content
-        setCaretPosition(editor, data.cursorPosition);
-    };
-    socket.onclose = () => logMessage('WebSocket connection closed.');
-    socket.onerror = (error) => logMessage(`WebSocket error: ${error}`);
-
-    // Button actions
-    document.getElementById('createBtn').addEventListener('click', () => {
-        const payload = `create:[${editor.value}]`;
-        socket.send(payload);
-        logMessage(`Sent: ${payload}`);
+    socket.addEventListener("message", e => {
+        if (e.data.startsWith("Session Connected:[")) {
+            const match = e.data.match(/\[([^\]]+)\]/);
+            if (match) {
+                sessionId = match[1];
+                log("Session ID: " + sessionId);
+            }
+            return;
+        }
+        try {
+            const data = JSON.parse(e.data);
+            log("Received: " + JSON.stringify(data));
+            if (data.event === "create" || data.event === "open") {
+                currentDocumentId = data.docId;
+                localVersion = data.version || 0;
+                editor.value = data.data;
+                prevValue = editor.value;
+                documentIdInput.value = currentDocumentId;
+            } else if (data.event === "update") {
+                editor.value = data.data;
+                localVersion = data.version;
+                prevValue = editor.value;
+            }
+        } catch {
+            log("Non-JSON message: " + e.data);
+        }
     });
 
-    document.getElementById('openBtn').addEventListener('click', () => {
-        const documentId = documentIdInput.value.trim();
-        if (documentId) {
-            currentDocumentId = documentId;
-            const payload = `open:[${documentId}]`;
-            socket.send(payload);
-            logMessage(`Sent: ${payload}`);
+    createBtn.addEventListener("click", () => {
+        const payload = {
+            event: "create",
+            data: editor.value,
+            cursorPosition: editor.selectionStart,
+            endCursorPosition: editor.selectionEnd,
+            docId: "",
+            docVersion: 0,
+            sessionId
+        };
+        socket.send(JSON.stringify(payload));
+        log("Sent: " + JSON.stringify(payload));
+    });
+
+    openBtn.addEventListener("click", () => {
+        const docId = documentIdInput.value.trim();
+        if (!docId) {
+            log("Please enter a Document ID.");
+            return;
+        }
+        const payload = {
+            event: "open",
+            data: "",
+            cursorPosition: 0,
+            endCursorPosition: 0,
+            docId,
+            docVersion: 0,
+            sessionId
+        };
+        socket.send(JSON.stringify(payload));
+        log("Sent: " + JSON.stringify(payload));
+    });
+
+    editor.addEventListener("input", () => {
+        if (!currentDocumentId) return;
+        const newValue = editor.value;
+        const diff = getDiff(prevValue, newValue);
+        if (!diff) {
+            prevValue = newValue;
+            return;
+        }
+
+        if (diff.eventType === "replace") {
+            // Send delete then insert for replace
+            socket.send(JSON.stringify({
+                event: "delete",
+                data: "",
+                cursorPosition: diff.start,
+                endCursorPosition: diff.end,
+                docId: currentDocumentId,
+                docVersion: localVersion,
+                sessionId
+            }));
+            log("Sent delete: " + JSON.stringify({
+                event: "delete",
+                cursorPosition: diff.start,
+                endCursorPosition: diff.end,
+                docId: currentDocumentId
+            }));
+
+            socket.send(JSON.stringify({
+                event: "insert",
+                data: diff.data,
+                cursorPosition: diff.start,
+                endCursorPosition: diff.start,
+                docId: currentDocumentId,
+                docVersion: localVersion,
+                sessionId
+            }));
+            log("Sent insert: " + JSON.stringify({
+                event: "insert",
+                data: diff.data,
+                cursorPosition: diff.start,
+                docId: currentDocumentId
+            }));
         } else {
-            logMessage('Please enter a document ID to open.');
+            socket.send(JSON.stringify({
+                event: diff.eventType,
+                data: diff.data,
+                cursorPosition: diff.start,
+                endCursorPosition: diff.end,
+                docId: currentDocumentId,
+                docVersion: localVersion,
+                sessionId
+            }));
+            log("Sent: " + JSON.stringify({
+                event: diff.eventType,
+                data: diff.data,
+                cursorPosition: diff.start,
+                endCursorPosition: diff.end,
+                docId: currentDocumentId
+            }));
         }
+        prevValue = newValue;
     });
 
-    document.getElementById('updateBtn').addEventListener('click', () => {
-        if (currentDocumentId) {
-            const content = editor.value;
-            const payload = `update:[${currentDocumentId},${content}]`;
-            socket.send(payload);
-            logMessage(`Sent: ${payload}`);
-        } else {
-            logMessage('No document is currently open. Please open a document first.');
-        }
-    });
-
-    // Update the document content in real-time as the user types
-    editor.addEventListener('input', () => {
-        if (currentDocumentId) {
-            const content = editor.value;
-            const payload = `update:[${currentDocumentId},${content}]`;
-            socket.send(payload);
-            logMessage(`Sent: ${payload}`);
-        }
+    themeToggle.addEventListener("click", () => {
+        const html = document.documentElement;
+        const current = html.getAttribute("data-theme") || "light";
+        const next = current === "light" ? "dark" : "light";
+        html.setAttribute("data-theme", next);
+        themeToggle.textContent = next === "light" ? "🌙" : "☀️";
     });
 </script>
 </body>

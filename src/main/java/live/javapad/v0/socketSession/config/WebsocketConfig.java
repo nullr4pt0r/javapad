@@ -1,6 +1,7 @@
 package live.javapad.v0.socketSession.config;
 
 import live.javapad.v0.socketSession.websocketHandler.TextEditorHandler;
+import live.javapad.v0.socketSession.websocketHandler.TextEditorHandlerV2;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.config.annotation.EnableWebSocket;
@@ -14,9 +15,9 @@ import org.springframework.web.socket.handler.TextWebSocketHandler;
 @EnableWebSocket
 public class WebsocketConfig implements WebSocketConfigurer {
 
-    private final TextEditorHandler textEditorHandler;
+    private final TextEditorHandlerV2 textEditorHandler;
 
-    public WebsocketConfig(TextEditorHandler textEditorHandler){
+    public WebsocketConfig(TextEditorHandlerV2 textEditorHandler){
         this.textEditorHandler = textEditorHandler;
     }
 

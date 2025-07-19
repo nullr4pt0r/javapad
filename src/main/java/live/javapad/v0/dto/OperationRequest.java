@@ -1,15 +1,14 @@
 package live.javapad.v0.dto;
 
-import lombok.Builder;
 import lombok.Data;
 
 @Data
-@Builder
-public class Response {
-    String event;
+public class OperationRequest {
     String data;
-    String sessionId;
-    String docId;
     Integer cursorPosition;
+    Integer endCursorPosition;
+    String docId;
     Integer docVersion;
+    String sessionId;
+    String event;
 }

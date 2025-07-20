@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>JavaPad 📝</title>
+    <style>
+        :root {
+            --bg: #fff;
+            --fg: #111;
+            --control-bg: #f0f0f0;
+            --border: #ccc;
+            --log-bg: #fafafa;
+        }
+        [data-theme="dark"] {
+            --bg: #121212;
+            --fg: #eee;
+            --control-bg: #1e1e1e;
+            --border: #444;
+            --log-bg: #222;
+        }
+        * {
+            box-sizing: border-box;
+        }
+        body {
+            margin: 0;
+            font-family: sans-serif;
+            background: var(--bg);
+            color: var(--fg);
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+        #controls {
+            display: flex;
+            gap: 0.5rem;
+            padding: 0.75rem 1rem;
+            background: var(--control-bg);
+            border-bottom: 1px solid var(--border);
+            align-items: center;
+        }
+        #documentId,#sessionName {
+            flex: 1;
+            padding: 0.5rem;
+            font-size: 1rem;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            background: var(--bg);
+            color: var(--fg);
+        }
+        button {
+            padding: 0.5rem 1rem;
+            font-size: 1rem;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            background: var(--bg);
+            color: var(--fg);
+            cursor: pointer;
+        }
+        button:hover {
+            background: var(--border);
+        }
+        #themeToggle {
+            margin-left: auto;
+            font-size: 1.25rem;
+            background: none;
+            border: none;
+        }
+        #editorWrapper {
+            flex: 1;
+            position: relative;
+        }
+        #editor {
+            width: 100%;
+            height: 100%;
+            padding: 1rem;
+            font-size: 1rem;
+            font-family: monospace;
+            border: none;
+            outline: none;
+            resize: none;
+            background: var(--bg);
+            color: var(--fg);
+            z-index: 1;
+            position: relative;
+        }
+        #cursorLayer {
+            position: absolute;
+            top: 1rem;
+            left: 1rem;
+            width: calc(100% - 2rem);
+            height: calc(100% - 2rem);
+            pointer-events: none;
+            z-index: 2;
+        }
+        .ghost-cursor {
+            position: absolute;
+            width: 2px;
+            height: 1.2em;
+            background: red;
+            animation: blink 1s steps(2, start) infinite;
+        }
+        .ghost-cursor .label {
+            position: absolute;
+            bottom: 100%;
+            font-size: 10px;
+            background: black;
+            color: white;
+            padding: 2px 4px;
+            border-radius: 4px;
+            transform: translateY(-2px);
+        }
+        @keyframes blink {
+            0% { opacity: 1; }
+            50% { opacity: 0; }
+            100% { opacity: 1; }
+        }
+        #logs {
+            height: 140px;
+            overflow-y: auto;
+            background: var(--log-bg);
+            border-top: 1px solid var(--border);
+            padding: 0.5rem 1rem;
+            font-size: 0.85rem;
+            font-family: monospace;
+        }
+        #logs p {
+            margin: 0 0 0.25rem;
+            word-break: break-word;
+        }
+    </style>
+</head>
+<body>
+<div id="controls">
+    <p>JavaPad 📝</p>
+    <input id="documentId" type="text" placeholder="Enter Document ID" />
+    <button id="createBtn">Create</button>
+    <button id="openBtn">Open</button>
+    <button id="themeToggle" aria-label="Toggle theme">🌙</button>
+    <input id="sessionName" type="text"  placeholder="Enter session name to help other user"/>
+    <button id="sessionSubmitBtn">Submit Name</button>
+    <button id="logsToggle">Show Logs</button>
+</div>
+
+<div id="editorWrapper">
+    <textarea id="editor" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off" placeholder="Start typing..."></textarea>
+    <div id="cursorLayer"></div>
+</div>
+
+<div id="logs">
+    <p>Debug Logs</p>
+</div>
+
+<script>
+    const socket = new WebSocket("ws://localhost:8080/editor");
+    const editor = document.getElementById("editor");
+    const cursorLayer = document.getElementById("cursorLayer");
+    const logs = document.getElementById("logs");
+    const createBtn = document.getElementById("createBtn");
+    const openBtn = document.getElementById("openBtn");
+    const documentIdInput = document.getElementById("documentId");
+    const themeToggle = document.getElementById("themeToggle");
+    const logsToggle = document.getElementById("logsToggle");
+
+    let sessionName = "Anonymous ";
+    let currentDocumentId = null;
+    let localVersion = 0;
+    let sessionId = "";
+    let prevValue = "";
+    const otherCursors = new Map();
+
+    document.getElementById("sessionSubmitBtn").addEventListener("click", () => {
+        const input = document.getElementById("sessionName").value.trim();
+        if (input) {
+            sessionName = input;
+            log("✅ Session name set to: " + sessionName);
+        } else {
+            log("⚠️ Please enter a valid session name.");
+        }
+    });
+
+    function log(msg) {
+        const p = document.createElement("p");
+        p.textContent = msg;
+        logs.appendChild(p);
+        logs.scrollTop = logs.scrollHeight;
+    }
+
+    function sendCursor() {
+        if (!currentDocumentId) return;
+        const payload = {
+            event: "cursor",
+            cursorPosition: editor.selectionStart,
+            docId: currentDocumentId,
+            sessionId,
+            sessionName
+        };
+        socket.send(JSON.stringify(payload));
+        log("Sent cursor: " + JSON.stringify(payload));
+    }
+
+    function renderCursor(session, position) {
+        if (session === sessionId) return;
+        let marker = otherCursors.get(session);
+        if (!marker) {
+            marker = document.createElement("div");
+            marker.className = "ghost-cursor";
+
+            const label = document.createElement("div");
+            label.className = "label";
+            label.textContent = session;
+            marker.appendChild(label);
+
+            cursorLayer.appendChild(marker);
+            otherCursors.set(session, marker);
+        }
+
+        const lineHeight = 20;
+        const charWidth = 8;
+        const top = Math.floor(position / 80) * lineHeight;
+        const left = (position % 80) * charWidth;
+
+        marker.style.top = `${top}px`;
+        marker.style.left = `${left}px`;
+    }
+
+    function getDiff(oldStr, newStr) {
+        const oldArr = [...oldStr];
+        const newArr = [...newStr];
+        let start = 0;
+        let oldEnd = oldArr.length;
+        let newEnd = newArr.length;
+
+        while (start < oldEnd && start < newEnd && oldArr[start] === newArr[start]) start++;
+        while (oldEnd > start && newEnd > start && oldArr[oldEnd - 1] === newArr[newEnd - 1]) {
+            oldEnd--;
+            newEnd--;
+        }
+
+        const removed = oldArr.slice(start, oldEnd).join('');
+        const added = newArr.slice(start, newEnd).join('');
+
+        if (removed.length === 0 && added.length > 0) {
+            return { eventType: "insert", start, data: added, end: start };
+        } else if (added.length === 0 && removed.length > 0) {
+            return { eventType: "delete", start, end: oldEnd - 1, data: "" };
+        } else if (removed.length > 0 && added.length > 0) {
+            return { eventType: "replace", start, end: oldEnd - 1, data: added };
+        } else {
+            return null;
+        }
+    }
+
+    socket.addEventListener("open", () => log("WebSocket connected."));
+    socket.addEventListener("error", e => log("WebSocket error: " + e.message));
+    socket.addEventListener("close", () => log("WebSocket disconnected."));
+
+    socket.addEventListener("message", e => {
+        if (e.data.startsWith("Session Connected:[")) {
+            const match = e.data.match(/\[([^\]]+)\]/);
+            if (match) {
+                sessionId = match[1];
+                log("Session ID: " + sessionId);
+            }
+            return;
+        }
+
+        try {
+            const data = JSON.parse(e.data);
+            log("Received: " + JSON.stringify(data));
+            if (data.event === "create" || data.event === "open") {
+                currentDocumentId = data.docId;
+                localVersion = data.docVersion || 0;
+                editor.value = data.data;
+                prevValue = data.data;
+                documentIdInput.value = currentDocumentId;
+            } else if (data.event === "update") {
+                editor.value = data.data;
+                localVersion = data.docVersion;
+                prevValue = data.data;
+            } else if (data.event === "cursor") {
+                renderCursor(data.sessionName != null ? data.sessionName : data.sessionId, data.cursorPosition);
+            }
+        } catch {
+            log("Non-JSON message: " + e.data);
+        }
+    });
+
+    createBtn.addEventListener("click", () => {
+        const payload = {
+            event: "create",
+            data: editor.value,
+            cursorPosition: editor.selectionStart,
+            endCursorPosition: editor.selectionEnd,
+            docId: "",
+            docVersion: 0,
+            sessionId,
+            sessionName
+        };
+        socket.send(JSON.stringify(payload));
+        log("Sent: " + JSON.stringify(payload));
+    });
+
+    openBtn.addEventListener("click", () => {
+        const docId = documentIdInput.value.trim();
+        if (!docId) return log("Please enter a Document ID.");
+        const payload = {
+            event: "open",
+            data: "",
+            cursorPosition: 0,
+            endCursorPosition: 0,
+            docId,
+            docVersion: 0,
+            sessionId,
+            sessionName
+        };
+        socket.send(JSON.stringify(payload));
+        log("Sent: " + JSON.stringify(payload));
+    });
+
+    editor.addEventListener("input", () => {
+        if (!currentDocumentId) return;
+        const newValue = editor.value;
+        const diff = getDiff(prevValue, newValue);
+        if (!diff) return;
+
+        if (diff.eventType === "replace") {
+            ["delete", "insert"].forEach(type => {
+                const payload = {
+                    event: type,
+                    data: type === "insert" ? diff.data : "",
+                    cursorPosition: diff.start,
+                    endCursorPosition: type === "insert" ? diff.start : diff.end,
+                    docId: currentDocumentId,
+                    docVersion: localVersion,
+                    sessionId,
+                    sessionName
+                };
+                socket.send(JSON.stringify(payload));
+                log("Sent: " + JSON.stringify(payload));
+            });
+        } else {
+            const payload = {
+                event: diff.eventType,
+                data: diff.data,
+                cursorPosition: diff.start,
+                endCursorPosition: diff.end,
+                docId: currentDocumentId,
+                docVersion: localVersion,
+                sessionId,
+                sessionName
+            };
+            socket.send(JSON.stringify(payload));
+            log("Sent: " + JSON.stringify(payload));
+        }
+        prevValue = newValue;
+        sendCursor();
+    });
+
+    editor.addEventListener("keyup", sendCursor);
+    editor.addEventListener("click", sendCursor);
+
+    themeToggle.addEventListener("click", () => {
+        const html = document.documentElement;
+        const current = html.getAttribute("data-theme") || "light";
+        const next = current === "light" ? "dark" : "light";
+        html.setAttribute("data-theme", next);
+        themeToggle.textContent = next === "light" ? "🌙" : "☀️";
+    });
+
+    logsToggle.addEventListener("click", () => {
+        const isHidden = logs.style.display === "none";
+        logs.style.display = isHidden ? "block" : "none";
+        logsToggle.textContent = isHidden ? "Hide Logs" : "Show Logs";
+    });
+
+</script>
+</body>
+</html>

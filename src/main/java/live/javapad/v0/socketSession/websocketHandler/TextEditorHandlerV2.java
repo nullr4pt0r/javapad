@@ -1,5 +1,6 @@
 package live.javapad.v0.socketSession.websocketHandler;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import live.javapad.v0.CollaborativeDocument;
 import live.javapad.v0.document.service.DocumentServiceV2;
@@ -80,12 +81,36 @@ public class TextEditorHandlerV2 extends TextWebSocketHandler {
         }
     }
 
+    private void broadcastCursorPosition(OperationRequest cursorUpdate, String senderSessionId) {
+        try {
+          String json = objectMapper.writeValueAsString(cursorUpdate);
+            sessions.forEach((id, sess) -> {
+                if (!id.equals(senderSessionId) && sess.isOpen()) {
+                    try {
+                        sess.sendMessage(new TextMessage(json));
+                    } catch (IOException e) {
+                        log.error("Failed to send cursor to session {}", id, e);
+                    }
+                }
+            });
+        } catch (JsonProcessingException e) {
+            log.error("Failed to serialize cursor position", e);
+            return;
+        }
+
+    }
+
 
     @Override
     public void handleTextMessage(WebSocketSession webSocketSession, TextMessage message) throws IOException {
         System.out.println(message.getPayload());
 
         OperationRequest or = objectMapper.readValue(message.getPayload(), OperationRequest.class);
+
+        if ("cursor".equals(or.getEvent())) {
+            broadcastCursorPosition(or, or.getSessionId());
+            return;
+        }
 
         handleOperations(webSocketSession, or);
     }

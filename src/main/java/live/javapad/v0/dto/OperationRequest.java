@@ -11,4 +11,5 @@ public class OperationRequest {
     Integer docVersion;
     String sessionId;
     String event;
+    String sessionName;
 }

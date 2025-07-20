@@ -28,7 +28,7 @@ public class DocumentServiceV2 implements IDocumentService {
 
     public void updateDocument(OperationRequest or){
         verifyDocumentExistence(or.getDocId());
-        transformDocumentContent(or);
+        handleTransformation(or);
     }
 
     public CollaborativeDocument getDocument(String documentId){

@@ -1,11 +1,12 @@
 package live.javapad.v0.socketSession.websocketHandler;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import live.javapad.v0.CollaborativeDocument;
+import live.javapad.v0.datastore.SessionStore;
 import live.javapad.v0.document.service.DocumentServiceV2;
 import live.javapad.v0.dto.OperationRequest;
-import live.javapad.v0.dto.Response;
+import live.javapad.v0.operationStrategy.*;
+import live.javapad.v0.session.service.SessionService;
+import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -16,30 +17,29 @@ import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
 
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.concurrent.ConcurrentHashMap;
 
+@AllArgsConstructor
 @Component
 @Slf4j
 public class TextEditorHandlerV2 extends TextWebSocketHandler {
 
-    private final ConcurrentHashMap<String, WebSocketSession> sessions = new ConcurrentHashMap<>(); //store sessions
 
-    private final ConcurrentHashMap<String, String> sessionToDocument = new ConcurrentHashMap<>();
 
-    @Autowired
+
     @Qualifier("documentServiceV2")
-    private DocumentServiceV2 documentService;
+    private final DocumentServiceV2 documentService;
     @Autowired
     private ObjectMapper objectMapper;
-    //all session comes here
 
 
-    //session intiation
+    private final OperationStrategyFactory operationStrategyFactory;
+    private final SessionService sessionService;
+    private final SessionStore sessionStore;
+
 
     @Override
     public void afterConnectionEstablished(WebSocketSession webSocketSession) throws IOException {
-        sessions.put(webSocketSession.getId(), webSocketSession);
+        sessionStore.addNewSession(webSocketSession.getId(), webSocketSession);
         log.info("Session Initiated : {}", webSocketSession.getId());
         webSocketSession.sendMessage(new TextMessage("Session Connected:["+webSocketSession.getId()+"]"));
     }
@@ -47,58 +47,34 @@ public class TextEditorHandlerV2 extends TextWebSocketHandler {
 
     public void handleOperations(WebSocketSession webSocketSession, OperationRequest or) throws IOException {
 
-        String documentId = or.getDocId();
         String operation = or.getEvent();
-        String content = or.getData();
-        String jsonResponse = null;
 
         try {
-           switch(operation){
-               case "create":
-                   CollaborativeDocument cd = documentService.createDocument(or);
-                   sessionToDocument.put(webSocketSession.getId(), cd.getId());
-                   jsonResponse = objectMapper.writeValueAsString(Response.builder().docId(cd.getId())
-                           .sessionId(webSocketSession.getId()).event("create").data(content).cursorPosition(content.length()+1).
-                           docVersion(cd.getVersion()).build());
-                   webSocketSession.sendMessage(new TextMessage(jsonResponse));
-                   break;
-               case "open":
-                   CollaborativeDocument doc = documentService.fetchAndAddCollaborator(documentId, or.getSessionId());
-                   sessionToDocument.put(webSocketSession.getId(), documentId);
-                   jsonResponse = objectMapper.writeValueAsString(Response.builder().docId(documentId)
-                           .sessionId(webSocketSession.getId()).event("open").data(doc.getContent()).cursorPosition(doc.getContent().length()+1)
-                           .docVersion(doc.getVersion()).build());
-                   webSocketSession.sendMessage(new TextMessage(jsonResponse));
-                   break;
-               case "insert" :
-                   case "delete":
-                       documentService.updateDocument(or);
-                       broadcastDocumentToAll(documentId);
-                       break;
-           }
-        }catch (IOException e) {
+            OperationStrategy operationStrategy = operationStrategyFactory.getOperationStrategy(operation);
+            operationStrategy.apply(or, webSocketSession);
+        }catch (Exception e) {
             webSocketSession.sendMessage(new TextMessage("Error : "+e.getMessage()));
         }
     }
 
-    private void broadcastCursorPosition(OperationRequest cursorUpdate, String senderSessionId) {
-        try {
-          String json = objectMapper.writeValueAsString(cursorUpdate);
-            sessions.forEach((id, sess) -> {
-                if (!id.equals(senderSessionId) && sess.isOpen()) {
-                    try {
-                        sess.sendMessage(new TextMessage(json));
-                    } catch (IOException e) {
-                        log.error("Failed to send cursor to session {}", id, e);
-                    }
-                }
-            });
-        } catch (JsonProcessingException e) {
-            log.error("Failed to serialize cursor position", e);
-            return;
-        }
-
-    }
+//    private void broadcastCursorPosition(OperationRequest cursorUpdate, String senderSessionId) {
+//        try {
+//          String json = objectMapper.writeValueAsString(cursorUpdate);
+//            sessions.forEach((id, sess) -> {
+//                if (!id.equals(senderSessionId) && sess.isOpen()) {
+//                    try {
+//                        sess.sendMessage(new TextMessage(json));
+//                    } catch (IOException e) {
+//                        log.error("Failed to send cursor to session {}", id, e);
+//                    }
+//                }
+//            });
+//        } catch (JsonProcessingException e) {
+//            log.error("Failed to serialize cursor position", e);
+//            return;
+//        }
+//
+//    }
 
 
     @Override
@@ -108,42 +84,17 @@ public class TextEditorHandlerV2 extends TextWebSocketHandler {
         OperationRequest or = objectMapper.readValue(message.getPayload(), OperationRequest.class);
 
         if ("cursor".equals(or.getEvent())) {
-            broadcastCursorPosition(or, or.getSessionId());
+//            broadcastCursorPosition(or, or.getSessionId());
             return;
         }
 
         handleOperations(webSocketSession, or);
     }
 
-    public void broadcastDocumentToAll(String documentId) throws IOException {
-        CollaborativeDocument cd = documentService.getDocument(documentId);
-
-        for(String sessionId: documentService.getCollaboratorsDetails(documentId)){
-            WebSocketSession session = sessions.get(sessionId);
-            Response response = Response.builder().docId(documentId).sessionId(session.getId()).event("update").data(cd.getContent())
-                    .docVersion(cd.getVersion())
-                    .cursorPosition(cd.getContent().length()+1).build();
-            String jsonResponse = objectMapper.writeValueAsString(response);
-            session.sendMessage(new TextMessage(jsonResponse));
-            log.info("Send : {} to session : {}", cd.getContent(), sessionId);
-        }
-
-        log.info("Broadcast completed !");
-    }
-
-
-
 
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status){
-        String sessionId = session.getId();
-        if(sessionToDocument.containsKey(sessionId)){
-            String documentId = sessionToDocument.get(sessionId);
-            sessionToDocument.remove(sessionId);
-            documentService.removeDocument(documentId);
-            log.info("Document removed for session : {}", sessionId);
-        }
-        sessions.remove(sessionId);
-        log.info("Session disconnected : {}", sessionId);
+        sessionService.removeDocuments(session);
+        log.info("Session disconnected : {}", session.getId());
     }
 }

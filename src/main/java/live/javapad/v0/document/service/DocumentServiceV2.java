@@ -1,7 +1,9 @@
 package live.javapad.v0.document.service;
 
 import live.javapad.v0.CollaborativeDocument;
+import live.javapad.v0.datastore.DocumentStore;
 import live.javapad.v0.dto.OperationRequest;
+import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -9,48 +11,39 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
+@AllArgsConstructor
 @Service("documentServiceV2")
 @Slf4j
 public class DocumentServiceV2 implements IDocumentService {
 
-//    private final ConcurrentHashMap<String, String> documentMap = new ConcurrentHashMap<>();
-
-    private final ConcurrentHashMap<String, CollaborativeDocument> documents = new ConcurrentHashMap<>();
-
-
+    private final DocumentStore documentStore;
 
     public CollaborativeDocument createDocument( OperationRequest operationRequest){
         String docId = String.valueOf(UUID.randomUUID());
         CollaborativeDocument cd = createCollaborativeDocument(operationRequest, docId);
-        documents.put(docId, cd);
+        documentStore.addDocument(docId, cd);
         return cd;
     }
 
     public void updateDocument(OperationRequest or){
-        verifyDocumentExistence(or.getDocId());
+        documentStore.verifyDocumentExistence(or.getDocId());
         handleTransformation(or);
     }
 
     public CollaborativeDocument getDocument(String documentId){
-        verifyDocumentExistence(documentId);
-        return documents.get(documentId);
+        documentStore.verifyDocumentExistence(documentId);
+        return documentStore.getDocumentByKey(documentId);
     }
 
     public CollaborativeDocument fetchAndAddCollaborator(String documentId, String sessionId){
-        verifyDocumentExistence(documentId);
+        documentStore.verifyDocumentExistence(documentId);
         if(sessionId != null)
             addCollaborator(documentId, sessionId);
-        return documents.get(documentId);
-    }
-
-    private void verifyDocumentExistence(String documentId) {
-        if(!documents.containsKey(documentId)){
-            throw new RuntimeException("Document Not Found!");
-        }
+        return documentStore.getDocumentByKey(documentId);
     }
 
     public void addCollaborator(String documentId, String sessionId){
-        documents.get(documentId).getCollaborators().add(sessionId);
+        documentStore.getDocumentByKey(documentId).getCollaborators().add(sessionId);
     }
 
     private CollaborativeDocument createCollaborativeDocument(OperationRequest operationRequest, String docId){
@@ -64,15 +57,15 @@ public class DocumentServiceV2 implements IDocumentService {
     }
 
     public List<String> getCollaboratorsDetails(String documentId){
-        return documents.get(documentId).getCollaborators();
+        return documentStore.getDocumentByKey(documentId).getCollaborators();
     }
 
     public void removeDocument(String documentId){
-        documents.remove(documentId);
+        documentStore.removeDocument(documentId);
     }
 
     private void transformDocumentContent(OperationRequest operationRequest){
-        CollaborativeDocument doc = documents.get(operationRequest.getDocId());
+        CollaborativeDocument doc = documentStore.getDocumentByKey(operationRequest.getDocId());
         if(doc == null){
             return;
         }
@@ -92,13 +85,13 @@ public class DocumentServiceV2 implements IDocumentService {
             doc.setContent(docContent.toString());
         doc.setVersion(doc.getVersion()+1);
         doc.getHistory().add(operationRequest);
-        documents.put(operationRequest.getDocId(), doc);
+        documentStore.addDocument(operationRequest.getDocId(), doc);
     }
 
     CollaborativeDocument transformDocumentOnVersionDifference(OperationRequest previous, OperationRequest current){
         String previousOperation = previous.getEvent();
         String currentOperation = current.getEvent();
-        CollaborativeDocument doc = documents.get(current.getDocId());
+        CollaborativeDocument doc = documentStore.getDocumentByKey(current.getDocId());
         StringBuilder docContent = new StringBuilder(doc.getContent());
         if(previousOperation.equals("insert") && currentOperation.equals("insert")){
             if(current.getCursorPosition() >= previous.getCursorPosition()){
@@ -144,9 +137,9 @@ public class DocumentServiceV2 implements IDocumentService {
     }
 
     void handleTransformation(OperationRequest request){
-        CollaborativeDocument document = documents.get(request.getDocId());
+        CollaborativeDocument document = documentStore.getDocumentByKey(request.getDocId());
         Integer currentDocumentVersion = document.getVersion();
-        if(currentDocumentVersion < request.getDocVersion()){
+        if(currentDocumentVersion > request.getDocVersion()){
             OperationRequest previous = document.getHistory().get(document.getHistory().size()-1);
             transformDocumentOnVersionDifference(previous, request);
         }else{

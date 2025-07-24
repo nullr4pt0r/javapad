@@ -2,154 +2,110 @@
 <html lang="en" data-theme="light">
 <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>JavaPad 📝</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <style>
         :root {
             --bg: #fff;
-            --fg: #111;
-            --control-bg: #f0f0f0;
+            --control-bg: #eee;
             --border: #ccc;
             --log-bg: #fafafa;
         }
-        [data-theme="dark"] {
-            --bg: #121212;
-            --fg: #eee;
-            --control-bg: #1e1e1e;
-            --border: #444;
-            --log-bg: #222;
-        }
-        * {
-            box-sizing: border-box;
-        }
-        body {
+
+        html, body {
             margin: 0;
-            font-family: sans-serif;
-            background: var(--bg);
-            color: var(--fg);
+            padding: 0;
+            height: 100%;
             display: flex;
             flex-direction: column;
-            height: 100vh;
+            background: var(--bg);
+            font-family: sans-serif;
         }
+
         #controls {
             display: flex;
             gap: 0.5rem;
+            align-items: center;
             padding: 0.75rem 1rem;
             background: var(--control-bg);
             border-bottom: 1px solid var(--border);
-            align-items: center;
+            flex-wrap: wrap;
         }
-        #documentId,#sessionName {
-            flex: 1;
+
+        #controls p {
+            margin: 0;
+            font-weight: bold;
+        }
+
+        input, button {
             padding: 0.5rem;
             font-size: 1rem;
             border: 1px solid var(--border);
             border-radius: 4px;
-            background: var(--bg);
-            color: var(--fg);
         }
+
         button {
-            padding: 0.5rem 1rem;
-            font-size: 1rem;
-            border: 1px solid var(--border);
-            border-radius: 4px;
-            background: var(--bg);
-            color: var(--fg);
             cursor: pointer;
+            background: #f0f0f0;
+            transition: background 0.2s;
         }
+
         button:hover {
-            background: var(--border);
+            background: #e0e0e0;
         }
-        #themeToggle {
-            margin-left: auto;
-            font-size: 1.25rem;
-            background: none;
-            border: none;
-        }
-        #editorWrapper {
+
+        #editorContainer {
             flex: 1;
-            position: relative;
-        }
-        #editor {
-            width: 100%;
             height: 100%;
-            padding: 1rem;
-            font-size: 1rem;
-            font-family: monospace;
-            border: none;
-            outline: none;
-            resize: none;
-            background: var(--bg);
-            color: var(--fg);
-            z-index: 1;
-            position: relative;
         }
-        #cursorLayer {
-            position: absolute;
-            top: 1rem;
-            left: 1rem;
-            width: calc(100% - 2rem);
-            height: calc(100% - 2rem);
-            pointer-events: none;
-            z-index: 2;
-        }
-        .ghost-cursor {
-            position: absolute;
-            width: 2px;
-            height: 1.2em;
-            background: red;
-            animation: blink 1s steps(2, start) infinite;
-        }
-        .ghost-cursor .label {
-            position: absolute;
-            bottom: 100%;
-            font-size: 10px;
-            background: black;
-            color: white;
-            padding: 2px 4px;
-            border-radius: 4px;
-            transform: translateY(-2px);
-        }
-        @keyframes blink {
-            0% { opacity: 1; }
-            50% { opacity: 0; }
-            100% { opacity: 1; }
-        }
+
         #logs {
-            height: 140px;
+            height: 120px;
             overflow-y: auto;
             background: var(--log-bg);
             border-top: 1px solid var(--border);
             padding: 0.5rem 1rem;
-            font-size: 0.85rem;
             font-family: monospace;
+            font-size: 0.85rem;
+            display: block;
         }
-        #logs p {
-            margin: 0 0 0.25rem;
-            word-break: break-word;
+
+        #logs.hidden {
+            display: none;
+        }
+
+        .status-indicator {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 5px;
+        }
+
+        .connected {
+            background-color: #4CAF50;
+        }
+
+        .disconnected {
+            background-color: #f44336;
         }
     </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/loader.min.js"></script>
 </head>
 <body>
+
 <div id="controls">
-    <p>JavaPad 📝</p>
+    <p>JavaPad 📝 <span id="connectionStatus" class="status-indicator disconnected"></span></p>
     <input id="documentId" type="text" placeholder="Enter Document ID" />
     <button id="createBtn">Create</button>
     <button id="openBtn">Open</button>
-    <button id="themeToggle" aria-label="Toggle theme">🌙</button>
-    <input id="sessionName" type="text"  placeholder="Enter session name to help other user"/>
-    <button id="sessionSubmitBtn">Submit Name</button>
-    <button id="logsToggle">Show Logs</button>
+    <input id="sessionName" type="text" placeholder="Enter session name" value="Anonymous" />
+    <button id="sessionSubmitBtn">Set Name</button>
+    <button id="logsToggle">Hide Logs</button>
 </div>
 
-<div id="editorWrapper">
-    <textarea id="editor" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off" placeholder="Start typing..."></textarea>
-    <div id="cursorLayer"></div>
-</div>
-
-<div id="logs">
-    <p>Debug Logs</p>
-</div>
+<div id="editorContainer"></div>
+<div id="logs"><p>📋 Logs appear here...</p></div>
 
 <script>
     const socket = new WebSocket("wss://javapad-v0.onrender.com/editor");
@@ -161,167 +117,183 @@
     const documentIdInput = document.getElementById("documentId");
     const themeToggle = document.getElementById("themeToggle");
     const logsToggle = document.getElementById("logsToggle");
+    // Application state
+    const state = {
+        editor: null,
+        sessionId: "",
+        currentDocumentId: "",
+        sessionName: "Anonymous",
+        prevValue: "",
+        localVersion: 0,
+        suppressChangeEvent: false,
+        socket: null,
+        isConnected: false,
+        reconnectAttempts: 0,
+        maxReconnectAttempts: 5
+    };
 
-    let sessionName = "Anonymous ";
-    let currentDocumentId = null;
-    let localVersion = 0;
-    let sessionId = "";
-    let prevValue = "";
-    const otherCursors = new Map();
+    // DOM elements
+    const elements = {
+        logBox: document.getElementById("logs"),
+        documentIdInput: document.getElementById("documentId"),
+        sessionNameInput: document.getElementById("sessionName"),
+        connectionStatus: document.getElementById("connectionStatus")
+    };
 
-    document.getElementById("sessionSubmitBtn").addEventListener("click", () => {
-        const input = document.getElementById("sessionName").value.trim();
-        if (input) {
-            sessionName = input;
-            log("✅ Session name set to: " + sessionName);
-        } else {
-            log("⚠️ Please enter a valid session name.");
-        }
-    });
-
-    function log(msg) {
-        const p = document.createElement("p");
-        p.textContent = msg;
-        logs.appendChild(p);
-        logs.scrollTop = logs.scrollHeight;
+    // Initialize the application
+    function init() {
+        setupEditor();
+        setupEventListeners();
+        connectWebSocket();
     }
 
-    function sendCursor() {
-        if (!currentDocumentId) return;
-        const payload = {
-            event: "cursor",
-            cursorPosition: editor.selectionStart,
-            docId: currentDocumentId,
-            sessionId,
-            sessionName
-        };
-        socket.send(JSON.stringify(payload));
-        log("Sent cursor: " + JSON.stringify(payload));
+    // Set up Monaco Editor
+    function setupEditor() {
+        require.config({ paths: { vs: "https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs" } });
+        require(["vs/editor/editor.main"], function() {
+            state.editor = monaco.editor.create(document.getElementById("editorContainer"), {
+                value: "",
+                language: "plaintext",
+                theme: "vs-light",
+                automaticLayout: true,
+                wordWrap: "on",
+                lineNumbers: "on",
+                readOnly: false,
+                scrollbar: {
+                    vertical: "auto",
+                    horizontal: "auto"
+                },
+                fontSize: 14,
+                cursorBlinking: "blink",
+                lineDecorationsWidth: 0,
+                renderWhitespace: "none"
+            });
+
+            state.editor.getDomNode().style.direction = "ltr";
+
+            // Editor event handlers
+            state.editor.onDidChangeModelContent(handleEditorChange);
+            state.editor.onKeyUp(sendCursorPosition);
+            state.editor.onDidChangeCursorPosition(sendCursorPosition);
+        });
     }
 
-    function renderCursor(session, position) {
-        if (session === sessionId) return;
-        let marker = otherCursors.get(session);
-        if (!marker) {
-            marker = document.createElement("div");
-            marker.className = "ghost-cursor";
+    // Set up event listeners for UI elements
+    function setupEventListeners() {
+        document.getElementById("createBtn").addEventListener("click", handleCreateDocument);
+        document.getElementById("openBtn").addEventListener("click", handleOpenDocument);
+        document.getElementById("sessionSubmitBtn").addEventListener("click", handleSetSessionName);
 
-            const label = document.createElement("div");
-            label.className = "label";
-            label.textContent = session;
-            marker.appendChild(label);
-
-            cursorLayer.appendChild(marker);
-            otherCursors.set(session, marker);
-        }
-
-        const lineHeight = 20;
-        const charWidth = 8;
-        const top = Math.floor(position / 80) * lineHeight;
-        const left = (position % 80) * charWidth;
-
-        marker.style.top = `${top}px`;
-        marker.style.left = `${left}px`;
-    }
-
-    function getDiff(oldStr, newStr) {
-        const oldArr = [...oldStr];
-        const newArr = [...newStr];
-        let start = 0;
-        let oldEnd = oldArr.length;
-        let newEnd = newArr.length;
-
-        while (start < oldEnd && start < newEnd && oldArr[start] === newArr[start]) start++;
-        while (oldEnd > start && newEnd > start && oldArr[oldEnd - 1] === newArr[newEnd - 1]) {
-            oldEnd--;
-            newEnd--;
-        }
-
-        const removed = oldArr.slice(start, oldEnd).join('');
-        const added = newArr.slice(start, newEnd).join('');
-
-        if (removed.length === 0 && added.length > 0) {
-            return { eventType: "insert", start, data: added, end: start };
-        } else if (added.length === 0 && removed.length > 0) {
-            return { eventType: "delete", start, end: oldEnd - 1, data: "" };
-        } else if (removed.length > 0 && added.length > 0) {
-            return { eventType: "replace", start, end: oldEnd - 1, data: added };
-        } else {
-            return null;
-        }
-    }
-
-    socket.addEventListener("open", () => log("WebSocket connected."));
-    socket.addEventListener("error", e => log("WebSocket error: " + e.message));
-    socket.addEventListener("close", () => log("WebSocket disconnected."));
-
-    socket.addEventListener("message", e => {
-        if (e.data.startsWith("Session Connected:[")) {
-            const match = e.data.match(/\[([^\]]+)\]/);
-            if (match) {
-                sessionId = match[1];
-                log("Session ID: " + sessionId);
+        const logsToggle = document.getElementById("logsToggle");
+        logsToggle.addEventListener("click", () => {
+            const logs = document.getElementById("logs");
+            if (logs.classList.contains("hidden")) {
+                logs.classList.remove("hidden");
+                logsToggle.textContent = "Hide Logs";
+            } else {
+                logs.classList.add("hidden");
+                logsToggle.textContent = "Show Logs";
             }
+        });
+    }
+
+    // WebSocket connection management
+    function connectWebSocket() {
+        if (state.socket && state.socket.readyState === WebSocket.OPEN) {
+            return;
+        }
+
+        state.socket = new WebSocket("wss://javapad-v0.onrender.com/editor");
+
+        state.socket.addEventListener("open", () => {
+            log("✅ WebSocket connected");
+            state.isConnected = true;
+            state.reconnectAttempts = 0;
+            updateConnectionStatus();
+        });
+
+        state.socket.addEventListener("message", handleSocketMessage);
+
+        state.socket.addEventListener("close", () => {
+            log("⚠️ WebSocket disconnected");
+            state.isConnected = false;
+            updateConnectionStatus();
+            attemptReconnect();
+        });
+
+        state.socket.addEventListener("error", (error) => {
+            log("❌ WebSocket error: " + error.message);
+            state.isConnected = false;
+            updateConnectionStatus();
+        });
+    }
+
+    function attemptReconnect() {
+        if (state.reconnectAttempts < state.maxReconnectAttempts) {
+            state.reconnectAttempts++;
+            const delay = Math.min(1000 * state.reconnectAttempts, 5000);
+            log(`⏳ Attempting to reconnect (${state.reconnectAttempts}/${state.maxReconnectAttempts}) in ${delay}ms...`);
+
+            setTimeout(() => {
+                connectWebSocket();
+            }, delay);
+        } else {
+            log("❌ Max reconnection attempts reached. Please refresh the page.");
+        }
+    }
+
+    function updateConnectionStatus() {
+        if (state.isConnected) {
+            elements.connectionStatus.className = "status-indicator connected";
+        } else {
+            elements.connectionStatus.className = "status-indicator disconnected";
+        }
+    }
+
+    // Handle WebSocket messages
+    function handleSocketMessage(event) {
+        if (event.data.startsWith("Session Connected:[")) {
+            state.sessionId = event.data.match(/\[(.*?)\]/)?.[1] || "";
+            log("🔐 Session ID: " + state.sessionId);
             return;
         }
 
         try {
-            const data = JSON.parse(e.data);
-            log("Received: " + JSON.stringify(data));
-            if (data.event === "create" || data.event === "open") {
-                currentDocumentId = data.docId;
-                localVersion = data.docVersion || 0;
-                editor.value = data.data;
-                prevValue = data.data;
-                documentIdInput.value = currentDocumentId;
-            } else if (data.event === "update") {
-                editor.value = data.data;
-                localVersion = data.docVersion;
-                prevValue = data.data;
-            } else if (data.event === "cursor") {
-                renderCursor(data.sessionName != null ? data.sessionName : data.sessionId, data.cursorPosition);
+            const data = JSON.parse(event.data);
+            log("📩 Received: " + JSON.stringify(data));
+
+            if (["create", "open", "update"].includes(data.event)) {
+                state.suppressChangeEvent = true;
+                state.currentDocumentId = data.docId;
+                state.localVersion = data.docVersion || 0;
+
+                // Update document ID in input field
+                elements.documentIdInput.value = state.currentDocumentId;
+
+                // Update editor content
+                state.editor.setValue(data.data);
+                state.prevValue = data.data;
+
+                // Restore cursor position if provided
+                if (data.cursorPosition !== undefined) {
+                    const pos = state.editor.getModel().getPositionAt(data.cursorPosition);
+                    state.editor.setPosition(pos);
+                }
+
+                state.suppressChangeEvent = false;
             }
-        } catch {
-            log("Non-JSON message: " + e.data);
+        } catch (error) {
+            log("⚠️ Error processing message: " + error.message);
+            log("⚠️ Raw message: " + event.data);
         }
-    });
+    }
 
-    createBtn.addEventListener("click", () => {
-        const payload = {
-            event: "create",
-            data: editor.value,
-            cursorPosition: editor.selectionStart,
-            endCursorPosition: editor.selectionEnd,
-            docId: "",
-            docVersion: 0,
-            sessionId,
-            sessionName
-        };
-        socket.send(JSON.stringify(payload));
-        log("Sent: " + JSON.stringify(payload));
-    });
+    // Editor change handler
+    function handleEditorChange() {
+        if (state.suppressChangeEvent || !state.currentDocumentId || !state.isConnected) return;
 
-    openBtn.addEventListener("click", () => {
-        const docId = documentIdInput.value.trim();
-        if (!docId) return log("Please enter a Document ID.");
-        const payload = {
-            event: "open",
-            data: "",
-            cursorPosition: 0,
-            endCursorPosition: 0,
-            docId,
-            docVersion: 0,
-            sessionId,
-            sessionName
-        };
-        socket.send(JSON.stringify(payload));
-        log("Sent: " + JSON.stringify(payload));
-    });
-
-    editor.addEventListener("input", () => {
-        if (!currentDocumentId) return;
-        const newValue = editor.value;
-        const diff = getDiff(prevValue, newValue);
+        const newValue = state.editor.getValue();
+        const diff = getDiff(state.prevValue, newValue);
         if (!diff) return;
 
         if (diff.eventType === "replace") {
@@ -331,13 +303,12 @@
                     data: type === "insert" ? diff.data : "",
                     cursorPosition: diff.start,
                     endCursorPosition: type === "insert" ? diff.start : diff.end,
-                    docId: currentDocumentId,
-                    docVersion: localVersion,
-                    sessionId,
-                    sessionName
+                    docId: state.currentDocumentId,
+                    docVersion: state.localVersion,
+                    sessionId: state.sessionId,
+                    sessionName: state.sessionName
                 };
-                socket.send(JSON.stringify(payload));
-                log("Sent: " + JSON.stringify(payload));
+                sendSocketMessage(payload);
             });
         } else {
             const payload = {
@@ -345,35 +316,145 @@
                 data: diff.data,
                 cursorPosition: diff.start,
                 endCursorPosition: diff.end,
-                docId: currentDocumentId,
-                docVersion: localVersion,
-                sessionId,
-                sessionName
+                docId: state.currentDocumentId,
+                docVersion: state.localVersion,
+                sessionId: state.sessionId,
+                sessionName: state.sessionName
             };
-            socket.send(JSON.stringify(payload));
-            log("Sent: " + JSON.stringify(payload));
+            sendSocketMessage(payload);
         }
-        prevValue = newValue;
-        sendCursor();
-    });
 
-    editor.addEventListener("keyup", sendCursor);
-    editor.addEventListener("click", sendCursor);
+        state.prevValue = newValue;
+        sendCursorPosition();
+    }
 
-    themeToggle.addEventListener("click", () => {
-        const html = document.documentElement;
-        const current = html.getAttribute("data-theme") || "light";
-        const next = current === "light" ? "dark" : "light";
-        html.setAttribute("data-theme", next);
-        themeToggle.textContent = next === "light" ? "🌙" : "☀️";
-    });
+    // Calculate difference between old and new content
+    function getDiff(oldStr, newStr) {
+        const oldArr = [...oldStr], newArr = [...newStr];
+        let start = 0, oldEnd = oldArr.length, newEnd = newArr.length;
 
-    logsToggle.addEventListener("click", () => {
-        const isHidden = logs.style.display === "none";
-        logs.style.display = isHidden ? "block" : "none";
-        logsToggle.textContent = isHidden ? "Hide Logs" : "Show Logs";
-    });
+        while (start < oldEnd && start < newEnd && oldArr[start] === newArr[start]) start++;
+        while (oldEnd > start && newEnd > start && oldArr[oldEnd - 1] === newArr[newEnd - 1]) {
+            oldEnd--; newEnd--;
+        }
 
+        const removed = oldArr.slice(start, oldEnd).join('');
+        const added = newArr.slice(start, newEnd).join('');
+
+        if (!removed && added) return { eventType: "insert", start, data: added, end: start };
+        if (!added && removed) return { eventType: "delete", start, end: oldEnd - 1, data: "" };
+        if (removed && added) return { eventType: "replace", start, end: oldEnd - 1, data: added };
+        return null;
+    }
+
+    // Send cursor position to server
+    function sendCursorPosition() {
+        if (!state.currentDocumentId || !state.editor || !state.isConnected) return;
+
+        const pos = state.editor.getPosition();
+        const offset = state.editor.getModel().getOffsetAt(pos);
+
+        const payload = {
+            event: "cursor",
+            cursorPosition: offset,
+            docId: state.currentDocumentId,
+            sessionId: state.sessionId,
+            sessionName: state.sessionName
+        };
+
+        sendSocketMessage(payload);
+        log("🖱️ Sent cursor: " + JSON.stringify(payload));
+    }
+
+    // Handle document creation
+    function handleCreateDocument() {
+        if (!state.isConnected) {
+            log("⚠️ Not connected to server");
+            return;
+        }
+
+        const pos = state.editor.getPosition();
+        const offset = state.editor.getModel().getOffsetAt(pos);
+
+        const payload = {
+            event: "create",
+            data: state.editor.getValue(),
+            cursorPosition: offset,
+            endCursorPosition: offset,
+            docId: "",
+            docVersion: 0,
+            sessionId: state.sessionId,
+            sessionName: state.sessionName
+        };
+
+        sendSocketMessage(payload);
+        log("🆕 Sent create: " + JSON.stringify(payload));
+    }
+
+    // Handle document opening
+    function handleOpenDocument() {
+        if (!state.isConnected) {
+            log("⚠️ Not connected to server");
+            return;
+        }
+
+        const docId = elements.documentIdInput.value.trim();
+        if (!docId) {
+            log("❗ Please enter Document ID.");
+            return;
+        }
+
+        const payload = {
+            event: "open",
+            data: "",
+            cursorPosition: 0,
+            endCursorPosition: 0,
+            docId,
+            docVersion: 0,
+            sessionId: state.sessionId,
+            sessionName: state.sessionName
+        };
+
+        sendSocketMessage(payload);
+        log("📂 Sent open: " + JSON.stringify(payload));
+    }
+
+    // Handle session name change
+    function handleSetSessionName() {
+        const input = elements.sessionNameInput.value.trim();
+        if (input) {
+            state.sessionName = input;
+            log("✅ Session name set: " + state.sessionName);
+        } else {
+            log("⚠️ Please enter a valid session name.");
+        }
+    }
+
+    // Send message through WebSocket with error handling
+    function sendSocketMessage(payload) {
+        if (!state.isConnected) {
+            log("⚠️ Cannot send message - not connected to server");
+            return;
+        }
+
+        try {
+            state.socket.send(JSON.stringify(payload));
+        } catch (error) {
+            log("❌ Error sending message: " + error.message);
+        }
+    }
+
+    // Log messages to the log box
+    function log(msg) {
+        const p = document.createElement("p");
+        p.textContent = msg;
+        elements.logBox.appendChild(p);
+        elements.logBox.scrollTop = elements.logBox.scrollHeight;
+    }
+
+    // Initialize the application when DOM is loaded
+    document.addEventListener("DOMContentLoaded", init);
 </script>
+
 </body>
 </html>

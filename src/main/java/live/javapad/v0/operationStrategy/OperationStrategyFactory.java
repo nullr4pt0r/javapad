@@ -12,6 +12,9 @@ public class OperationStrategyFactory {
     private final UpdateOperationStrategy updateOperationStrategy;
 
     public OperationStrategy getOperationStrategy(String operation){
+        if (operation == null) {
+            return null;
+        }
         switch (operation){
             case "create" :
                 return createOperationStrategy;

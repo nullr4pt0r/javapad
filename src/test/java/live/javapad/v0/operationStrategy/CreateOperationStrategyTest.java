@@ -7,6 +7,7 @@ import live.javapad.v0.datastore.SessionStore;
 import live.javapad.v0.document.service.DocumentServiceV2;
 import live.javapad.v0.dto.OperationRequest;
 import live.javapad.v0.dto.Response;
+import live.javapad.v0.observer.DocumentEventPublisher;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -38,6 +39,9 @@ class CreateOperationStrategyTest {
     private SessionStore sessionStore;
 
     @Mock
+    private DocumentEventPublisher eventPublisher;
+
+    @Mock
     private WebSocketSession webSocketSession;
 
     private CreateOperationStrategy createOperationStrategy;
@@ -47,7 +51,7 @@ class CreateOperationStrategyTest {
 
     @BeforeEach
     void setUp() {
-        createOperationStrategy = new CreateOperationStrategy(documentService, objectMapper, sessionStore);
+        createOperationStrategy = new CreateOperationStrategy(documentService, objectMapper, sessionStore, eventPublisher);
 
         operationRequest = new OperationRequest();
         operationRequest.setData("Test document content");
@@ -87,6 +91,7 @@ class CreateOperationStrategyTest {
         verify(sessionStore).addDocumentToSession("session-123", "doc-456");
         verify(webSocketSession).sendMessage(any(TextMessage.class));
         verify(objectMapper).writeValueAsString(any(Response.class));
+        verify(eventPublisher).notifyDocumentCreated("doc-456", collaborativeDocument);
     }
 
     @Test

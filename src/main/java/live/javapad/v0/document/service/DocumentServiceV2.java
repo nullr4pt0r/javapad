@@ -146,4 +146,97 @@ public class DocumentServiceV2 implements IDocumentService {
             transformDocumentContent(request);
         }
     }
+
+    // Enhanced methods to support Command pattern
+
+    /**
+     * Create a document with a specific ID and initial content.
+     * Used by CreateDocumentCommand.
+     *
+     * @param documentId      The document ID
+     * @param initialContent  The initial content
+     * @param sessionId       The session ID of the creator
+     * @return The created document
+     */
+    public CollaborativeDocument createDocumentWithId(String documentId, String initialContent, String sessionId) {
+        CollaborativeDocument document = new CollaborativeDocument();
+        document.setId(documentId);
+        document.setContent(initialContent != null ? initialContent : "");
+        document.getCollaborators().add(sessionId);
+        
+        // Create initial operation request for history
+        OperationRequest initialOperation = new OperationRequest();
+        initialOperation.setDocId(documentId);
+        initialOperation.setSessionId(sessionId);
+        initialOperation.setEvent("create");
+        initialOperation.setData(initialContent != null ? initialContent : "");
+        initialOperation.setCursorPosition(0);
+        initialOperation.setDocVersion(0);
+        
+        document.getHistory().add(initialOperation);
+        documentStore.addDocument(documentId, document);
+        
+        log.debug("Created document with ID: {} for session: {}", documentId, sessionId);
+        return document;
+    }
+
+    /**
+     * Insert text at a specific position in a document.
+     * Used by InsertTextCommand.
+     *
+     * @param documentId The document ID
+     * @param text       The text to insert
+     * @param position   The position to insert at
+     */
+    public void insertText(String documentId, String text, int position) {
+        documentStore.verifyDocumentExistence(documentId);
+        CollaborativeDocument document = documentStore.getDocumentByKey(documentId);
+        
+        StringBuilder content = new StringBuilder(document.getContent());
+        int insertPos = Math.max(0, Math.min(position, content.length()));
+        content.insert(insertPos, text);
+        
+        document.setContent(content.toString());
+        document.setVersion(document.getVersion() + 1);
+        
+        documentStore.addDocument(documentId, document);
+        log.debug("Inserted '{}' at position {} in document: {}", text, position, documentId);
+    }
+
+    /**
+     * Delete text from a document between specified positions.
+     * Used by DeleteTextCommand.
+     *
+     * @param documentId    The document ID
+     * @param startPosition The start position (inclusive)
+     * @param endPosition   The end position (exclusive)
+     */
+    public void deleteText(String documentId, int startPosition, int endPosition) {
+        documentStore.verifyDocumentExistence(documentId);
+        CollaborativeDocument document = documentStore.getDocumentByKey(documentId);
+        
+        StringBuilder content = new StringBuilder(document.getContent());
+        int start = Math.max(0, Math.min(startPosition, content.length()));
+        int end = Math.max(start, Math.min(endPosition, content.length()));
+        
+        if (start < end) {
+            content.delete(start, end);
+            document.setContent(content.toString());
+            document.setVersion(document.getVersion() + 1);
+            documentStore.addDocument(documentId, document);
+            log.debug("Deleted text from position {}-{} in document: {}", start, end, documentId);
+        }
+    }
+
+    /**
+     * Delete a document completely.
+     * Used by CreateDocumentCommand undo.
+     *
+     * @param documentId The document ID
+     */
+    public void deleteDocument(String documentId) {
+        documentStore.verifyDocumentExistence(documentId);
+        documentStore.removeDocument(documentId);
+        log.debug("Deleted document: {}", documentId);
+    }
 }

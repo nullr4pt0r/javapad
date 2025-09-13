@@ -16,7 +16,10 @@ import java.util.List;
 public class CollaborativeDocument {
     private String id;
     private String content;
+    @Builder.Default
     private Integer version = 0;
+    @Builder.Default
     private List<OperationRequest> history = new ArrayList<>();
+    @Builder.Default
     private List<String> collaborators = new ArrayList<>();
 }
